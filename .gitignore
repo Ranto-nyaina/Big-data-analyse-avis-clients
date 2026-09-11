@@ -1,0 +1,39 @@
+# Environnement Python
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Dataset brut
+data/raw/
+avis.zip
+
+# Base de donn�es temps r�el
+data/realtime_reviews.db
+*.db
+
+# Fichiers temporaires
+*.tmp
+*.log
+
+# Streamlit
+.streamlit/secrets.toml
+
+# R�sultats temporaires
+results/pyspark/
+
+# Syst�me
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Dataset traité volumineux
+data/processed/reviews_clean.csv
