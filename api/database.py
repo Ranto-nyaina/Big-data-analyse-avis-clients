@@ -1,31 +1,41 @@
-import sqlite3
-from pathlib import Path
+import os
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
 
 
 # ==========================================================
-# CONFIGURATION
+# CHARGEMENT DES VARIABLES D'ENVIRONNEMENT
 # ==========================================================
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-DATABASE_FILE = DATA_DIR / "realtime_reviews.db"
+load_dotenv()
 
 
 # ==========================================================
-# CONNEXION SQLITE
+# CONFIGURATION POSTGRESQL
+# ==========================================================
+
+DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+DB_PORT = os.getenv("DB_PORT", "5433")
+DB_NAME = os.getenv("DB_NAME", "bigdata_reviews")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+
+
+# ==========================================================
+# CONNEXION POSTGRESQL
 # ==========================================================
 
 def get_connection():
 
-    connection = sqlite3.connect(
-        DATABASE_FILE,
-        check_same_thread=False
+    connection = psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
     )
-
-    connection.row_factory = sqlite3.Row
 
     return connection
 
@@ -43,7 +53,7 @@ def init_database():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS reviews (
 
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
 
             product_id TEXT,
 
@@ -55,11 +65,11 @@ def init_database():
 
             sentiment TEXT,
 
-            sentiment_confidence REAL,
+            sentiment_confidence DOUBLE PRECISION,
 
             predicted_score INTEGER,
 
-            rating_confidence REAL,
+            rating_confidence DOUBLE PRECISION,
 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
@@ -68,6 +78,7 @@ def init_database():
 
     connection.commit()
 
+    cursor.close()
     connection.close()
 
 
@@ -105,7 +116,9 @@ def insert_review(
 
         )
 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+
+        RETURNING id
         """,
 
         (
@@ -120,10 +133,11 @@ def insert_review(
         )
     )
 
+    review_id = cursor.fetchone()[0]
+
     connection.commit()
 
-    review_id = cursor.lastrowid
-
+    cursor.close()
     connection.close()
 
     return review_id
@@ -137,7 +151,9 @@ def get_recent_reviews(limit=20):
 
     connection = get_connection()
 
-    cursor = connection.cursor()
+    cursor = connection.cursor(
+        cursor_factory=RealDictCursor
+    )
 
     cursor.execute(
         """
@@ -157,7 +173,7 @@ def get_recent_reviews(limit=20):
 
         ORDER BY id DESC
 
-        LIMIT ?
+        LIMIT %s
         """,
 
         (limit,)
@@ -165,6 +181,7 @@ def get_recent_reviews(limit=20):
 
     rows = cursor.fetchall()
 
+    cursor.close()
     connection.close()
 
     return [
@@ -183,7 +200,10 @@ def get_statistics():
 
     cursor = connection.cursor()
 
-    # Total
+    # ======================================================
+    # TOTAL
+    # ======================================================
+
     cursor.execute(
         """
         SELECT COUNT(*) AS total
@@ -191,9 +211,13 @@ def get_statistics():
         """
     )
 
-    total = cursor.fetchone()["total"]
+    total = cursor.fetchone()[0]
 
-    # Positifs
+
+    # ======================================================
+    # POSITIFS
+    # ======================================================
+
     cursor.execute(
         """
         SELECT COUNT(*) AS total
@@ -202,9 +226,13 @@ def get_statistics():
         """
     )
 
-    positif = cursor.fetchone()["total"]
+    positif = cursor.fetchone()[0]
 
-    # Neutres
+
+    # ======================================================
+    # NEUTRES
+    # ======================================================
+
     cursor.execute(
         """
         SELECT COUNT(*) AS total
@@ -213,9 +241,13 @@ def get_statistics():
         """
     )
 
-    neutre = cursor.fetchone()["total"]
+    neutre = cursor.fetchone()[0]
 
-    # Négatifs
+
+    # ======================================================
+    # NEGATIFS
+    # ======================================================
+
     cursor.execute(
         """
         SELECT COUNT(*) AS total
@@ -224,9 +256,13 @@ def get_statistics():
         """
     )
 
-    negatif = cursor.fetchone()["total"]
+    negatif = cursor.fetchone()[0]
 
-    # Note moyenne
+
+    # ======================================================
+    # NOTE MOYENNE
+    # ======================================================
+
     cursor.execute(
         """
         SELECT AVG(score) AS moyenne
@@ -235,12 +271,24 @@ def get_statistics():
         """
     )
 
-    moyenne = cursor.fetchone()["moyenne"]
+    moyenne = cursor.fetchone()[0]
 
+
+    cursor.close()
     connection.close()
+
+
+    # ======================================================
+    # VALEUR PAR DEFAUT
+    # ======================================================
 
     if moyenne is None:
         moyenne = 0
+
+
+    # ======================================================
+    # POURCENTAGES
+    # ======================================================
 
     if total > 0:
 
@@ -262,12 +310,19 @@ def get_statistics():
         pourcentage_neutre = 0
         pourcentage_negatif = 0
 
+
+    # ======================================================
+    # RESULTAT
+    # ======================================================
+
     return {
 
         "total": total,
 
         "positif": positif,
+
         "neutre": neutre,
+
         "negatif": negatif,
 
         "pourcentage_positif":
@@ -280,5 +335,6 @@ def get_statistics():
             round(pourcentage_negatif, 2),
 
         "note_moyenne":
-            round(moyenne, 2)
+            round(float(moyenne), 2)
+
     }
