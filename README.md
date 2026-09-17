@@ -768,13 +768,13 @@ La base SQLite est exclue du dépôt GitHub car elle est générée localement.
 ## 1. Cloner le projet
 
 ```powershell
-git clone https://github.com/Ranto-nyaina/big-data-analyse-avis-clients.git
+git clone https://github.com/Ranto-nyaina/Big-data-analyse-avis-clients.git
 ```
 
 Puis :
 
 ```powershell
-cd big-data-analyse-avis-clients
+cd Big-data-analyse-avis-clients
 ```
 
 ---
