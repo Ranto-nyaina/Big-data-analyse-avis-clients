@@ -36,39 +36,153 @@ st.set_page_config(
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-DATA_DIR = BASE_DIR / "dashboard" / "data"
+DATA_DIR = Path(
+    os.getenv("DASHBOARD_DATA_DIR", BASE_DIR / "dashboard" / "data")
+)
 
-FIGURES_DIR = BASE_DIR / "dashboard" / "figures"
+FIGURES_DIR = Path(
+    os.getenv("DASHBOARD_FIGURES_DIR", BASE_DIR / "dashboard" / "figures")
+)
 
-MODELS_DIR = BASE_DIR / "models"
+MODELS_DIR = Path(
+    os.getenv("DASHBOARD_MODELS_DIR", BASE_DIR / "models")
+)
 
-RESULTS_DIR = BASE_DIR / "results"
+RESULTS_DIR = Path(
+    os.getenv("DASHBOARD_RESULTS_DIR", BASE_DIR / "results")
+)
 
 
 # ==========================================================
 # API
 # ==========================================================
 
-API_URL = "http://127.0.0.1:8000"
+API_URL = os.getenv("DASHBOARD_API_URL", "http://127.0.0.1:8000")
 
 
 # ==========================================================
 # STYLE
 # ==========================================================
 
+PALETTE = [
+    "#2563EB",
+    "#0EA5A4",
+    "#F59E0B",
+    "#EF4444",
+    "#8B5CF6",
+    "#10B981",
+]
+
+px.defaults.template = "plotly_white"
+px.defaults.color_discrete_sequence = PALETTE
+
 st.markdown(
     """
     <style>
 
-    .main {
-        padding-top: 1rem;
+    /* ---------- Typographie générale ---------- */
+
+    html, body, [class*="css"] {
+        font-family: "Segoe UI", "Inter", -apple-system,
+            BlinkMacSystemFont, sans-serif;
     }
 
-    .metric-card {
+    .main {
+        padding-top: 1.5rem;
+    }
+
+    h1 {
+        font-weight: 700;
+        color: #0F172A;
+        border-bottom: 2px solid #E2E8F0;
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+    }
+
+    h2, h3 {
+        color: #1E293B;
+        font-weight: 600;
+    }
+
+    /* ---------- Sidebar ---------- */
+
+    section[data-testid="stSidebar"] {
+        background-color: #0F172A;
+    }
+
+    section[data-testid="stSidebar"] * {
+        color: #E2E8F0 !important;
+    }
+
+    section[data-testid="stSidebar"] .stRadio > label {
+        font-weight: 600;
+    }
+
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {
+        background-color: #1E293B;
+        border-radius: 8px;
+        padding: 8px 12px;
+        margin-bottom: 6px;
+        transition: background-color 0.2s ease;
+    }
+
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+        background-color: #334155;
+    }
+
+    /* ---------- Cartes de metrics ---------- */
+
+    div[data-testid="stMetric"] {
         background-color: #ffffff;
-        padding: 15px;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 16px 18px;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    }
+
+    div[data-testid="stMetricLabel"] {
+        font-weight: 600;
+        color: #475569;
+    }
+
+    div[data-testid="stMetricValue"] {
+        color: #0F172A;
+        font-weight: 700;
+    }
+
+    /* ---------- Onglets, boutons, formulaires ---------- */
+
+    .stButton > button, .stFormSubmitButton > button {
+        border-radius: 8px;
+        font-weight: 600;
+        border: none;
+    }
+
+    div[data-testid="stForm"] {
+        background-color: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 1.2rem;
+    }
+
+    /* ---------- Tableaux ---------- */
+
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #E2E8F0;
         border-radius: 10px;
-        border: 1px solid #eeeeee;
+        overflow: hidden;
+    }
+
+    /* ---------- Séparateurs ---------- */
+
+    hr {
+        border-color: #E2E8F0 !important;
+    }
+
+    /* ---------- Alertes (success / warning / error / info) ---------- */
+
+    div[data-testid="stAlert"] {
+        border-radius: 10px;
     }
 
     </style>
@@ -762,7 +876,9 @@ def page_evolution():
                 fig.update_layout(
                     title="Évolution des sentiments",
                     xaxis_title="Année",
-                    yaxis_title="Nombre d'avis"
+                    yaxis_title="Nombre d'avis",
+                    template="plotly_white",
+                    colorway=PALETTE
                 )
 
                 st.plotly_chart(
@@ -1496,7 +1612,7 @@ def page_avis_temps_reel():
         Cette page permet de recevoir les nouveaux avis,
         de les analyser automatiquement avec les modèles
         de Machine Learning et de les enregistrer dans
-        une base SQLite.
+        une base PostgreSQL.
         """
     )
 
@@ -2012,7 +2128,7 @@ def page_analyse_temps_reel():
     st.title("📊 Analyse en temps réel")
 
     st.caption(
-        "Analyse dynamique des avis enregistrés dans SQLite"
+        "Analyse dynamique des avis enregistrés dans PostgreSQL"
     )
 
     # ==========================================================
@@ -2539,9 +2655,11 @@ st.sidebar.title(
     "📊 Big Data Reviews"
 )
 
-st.sidebar.write(
+st.sidebar.caption(
     "Analyse intelligente des avis clients"
 )
+
+st.sidebar.divider()
 
 page = st.sidebar.radio(
     "Navigation",
@@ -2554,6 +2672,12 @@ page = st.sidebar.radio(
         "📡 Avis en temps réel",
         "📊 Analyse en temps réel"
     ]
+)
+
+st.sidebar.divider()
+
+st.sidebar.caption(
+    "Propulsé par Streamlit, FastAPI et scikit-learn"
 )
 
 

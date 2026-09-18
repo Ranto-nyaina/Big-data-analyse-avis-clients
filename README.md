@@ -187,7 +187,9 @@ Le dataset brut est également exclu du dépôt GitHub.
 
 ## Base de données
 
-* SQLite
+* PostgreSQL
+* psycopg2 (pool de connexions)
+* python-dotenv
 
 ## Gestion du projet
 
@@ -208,9 +210,7 @@ big-data-analyse-avis-clients/
 │   ├── processed/
 │   │   └── reviews_clean.csv
 │   │
-│   ├── sample/
-│   │
-│   └── realtime_reviews.db
+│   └── sample/
 │
 ├── notebooks/
 │
@@ -250,6 +250,7 @@ big-data-analyse-avis-clients/
 │   └── main.py
 │
 ├── requirements.txt
+├── .env
 ├── README.md
 └── .gitignore
 ```
@@ -727,7 +728,7 @@ Modèle Sentiment
      ↓
 Modèle Note
      ↓
-SQLite
+PostgreSQL
      ↓
 Dashboard Streamlit
 ```
@@ -738,13 +739,21 @@ Les statistiques sont ensuite actualisées dans le dashboard.
 
 # 🗄️ Base de données
 
-Les avis générés en temps réel sont enregistrés dans SQLite :
+Les avis générés en temps réel sont enregistrés dans **PostgreSQL**, via un pool de connexions (`api/database.py`).
+
+La connexion est configurée par variables d'environnement, à définir dans un fichier `.env` à la racine du projet :
 
 ```text
-data/realtime_reviews.db
+DB_HOST=127.0.0.1
+DB_PORT=5433
+DB_NAME=bigdata_reviews
+DB_USER=postgres
+DB_PASSWORD=votre_mot_de_passe
 ```
 
-La base contient notamment :
+`DB_PASSWORD` est obligatoire : au démarrage, l'API refuse de se lancer si cette variable n'est pas définie, plutôt que d'échouer plus tard avec une erreur peu claire.
+
+La table `reviews` contient notamment :
 
 ```text
 id
@@ -759,7 +768,7 @@ rating_confidence
 created_at
 ```
 
-La base SQLite est exclue du dépôt GitHub car elle est générée localement.
+Le fichier `.env` est exclu du dépôt GitHub car il contient des identifiants de connexion.
 
 ---
 
@@ -800,6 +809,32 @@ Activer l'environnement :
 ```powershell
 python -m pip install -r requirements.txt
 ```
+
+---
+
+## 4. Configurer les variables d'environnement
+
+Créer un fichier `.env` à la racine du projet :
+
+```text
+DB_HOST=127.0.0.1
+DB_PORT=5433
+DB_NAME=bigdata_reviews
+DB_USER=postgres
+DB_PASSWORD=votre_mot_de_passe
+```
+
+Optionnel — si l'API ou les fichiers du dashboard ne sont pas à leur emplacement par défaut :
+
+```text
+DASHBOARD_API_URL=http://127.0.0.1:8000
+DASHBOARD_DATA_DIR=chemin/vers/dashboard/data
+DASHBOARD_FIGURES_DIR=chemin/vers/dashboard/figures
+DASHBOARD_MODELS_DIR=chemin/vers/models
+DASHBOARD_RESULTS_DIR=chemin/vers/results
+```
+
+Sans ces variables optionnelles, le dashboard utilise les mêmes chemins par défaut qu'auparavant.
 
 ---
 
@@ -1034,7 +1069,6 @@ Plusieurs améliorations sont possibles :
 
 ### Architecture
 
-* remplacer SQLite par PostgreSQL ;
 * déployer FastAPI sur un serveur ;
 * déployer Streamlit dans le cloud ;
 * utiliser Docker ;
@@ -1059,7 +1093,7 @@ Le fichier `.gitignore` exclut notamment :
 venv/
 data/raw/
 data/processed/reviews_clean.csv
-data/realtime_reviews.db
+.env
 results/pyspark/
 ```
 
@@ -1082,7 +1116,7 @@ Ce projet permet de mettre en pratique :
 * API REST
 * FastAPI
 * Streamlit
-* SQLite
+* PostgreSQL
 * Git
 * GitHub
 * Visualisation de données

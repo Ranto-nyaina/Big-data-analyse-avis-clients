@@ -11,7 +11,9 @@ from api.database import (
     init_database,
     insert_review,
     get_recent_reviews,
-    get_statistics
+    get_statistics,
+    close_pool,
+    DatabaseError
 )
 
 from api.models import ReviewCreate
@@ -135,15 +137,44 @@ app.add_middleware(
 @app.on_event("startup")
 def startup_event():
 
-    init_database()
+    try:
+
+        init_database()
+
+    except DatabaseError as e:
+
+        print("")
+        print("==========================================")
+        print("   ECHEC INITIALISATION POSTGRESQL")
+        print("==========================================")
+        print(e)
+        print("")
+
+        raise
 
     print("")
     print("==========================================")
-    print("       BASE SQLITE INITIALISEE")
+    print("       BASE POSTGRESQL INITIALISEE")
     print("==========================================")
     print(
-        f"Base : {BASE_DIR / 'data' / 'realtime_reviews.db'}"
+        f"Base : postgresql://.../{BASE_DIR.name}"
     )
+    print("")
+
+
+# ==========================================================
+# FERMETURE
+# ==========================================================
+
+@app.on_event("shutdown")
+def shutdown_event():
+
+    close_pool()
+
+    print("")
+    print("==========================================")
+    print("   POOL POSTGRESQL FERME PROPREMENT")
+    print("==========================================")
     print("")
 
 
@@ -313,31 +344,44 @@ def create_review(
     )
 
     # ------------------------------------------------------
-    # SQLITE
+    # ENREGISTREMENT POSTGRESQL
     # ------------------------------------------------------
 
-    review_id = insert_review(
+    try:
 
-        product_id=review.product_id,
+        review_id = insert_review(
 
-        user_name=review.user_name,
+            product_id=review.product_id,
 
-        text=text,
+            user_name=review.user_name,
 
-        score=review.score,
+            text=text,
 
-        sentiment=sentiment,
+            score=review.score,
 
-        sentiment_confidence=(
-            sentiment_confidence
-        ),
+            sentiment=sentiment,
 
-        predicted_score=predicted_score,
+            sentiment_confidence=(
+                sentiment_confidence
+            ),
 
-        rating_confidence=(
-            rating_confidence
+            predicted_score=predicted_score,
+
+            rating_confidence=(
+                rating_confidence
+            )
         )
-    )
+
+    except DatabaseError as e:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=(
+                f"Erreur lors de l'enregistrement en base : {e}"
+            )
+        )
 
     # ------------------------------------------------------
     # REPONSE
@@ -400,9 +444,20 @@ def reviews(
 
         limit = 100
 
-    data = get_recent_reviews(
-        limit
-    )
+    try:
+
+        data = get_recent_reviews(
+            limit
+        )
+
+    except DatabaseError as e:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=f"Erreur lors de la lecture des avis : {e}"
+        )
 
     return {
 
@@ -421,7 +476,18 @@ def reviews(
 @app.get("/api/reviews/stats")
 def review_statistics():
 
-    return get_statistics()
+    try:
+
+        return get_statistics()
+
+    except DatabaseError as e:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=f"Erreur lors du calcul des statistiques : {e}"
+        )
 
 
 # ==========================================================

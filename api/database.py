@@ -1,6 +1,9 @@
 import os
+import logging
+from contextlib import contextmanager
 
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
@@ -10,6 +13,8 @@ from dotenv import load_dotenv
 # ==========================================================
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 # ==========================================================
@@ -22,22 +27,178 @@ DB_NAME = os.getenv("DB_NAME", "bigdata_reviews")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 
+# Bornes du pool de connexions. À ajuster selon la charge réelle
+# (nombre d'onglets/utilisateurs simultanés sur le dashboard).
+POOL_MIN_CONNECTIONS = 1
+POOL_MAX_CONNECTIONS = 10
+
 
 # ==========================================================
-# CONNEXION POSTGRESQL
+# EXCEPTIONS
+# ==========================================================
+
+class DatabaseError(Exception):
+    """Erreur générique remontée par la couche base de données."""
+
+
+class ConfigurationError(DatabaseError):
+    """Variable d'environnement manquante ou invalide."""
+
+
+def _check_config():
+
+    if not DB_PASSWORD:
+
+        raise ConfigurationError(
+            "DB_PASSWORD n'est pas défini. Vérifiez votre fichier .env "
+            "ou les variables d'environnement du service avant de "
+            "démarrer l'application."
+        )
+
+
+# ==========================================================
+# POOL DE CONNEXIONS
+# ==========================================================
+
+_pool = None
+
+
+def _get_pool():
+    """
+    Retourne le pool de connexions, en le créant au premier appel.
+    Un seul pool est partagé par tout le processus.
+    """
+
+    global _pool
+
+    if _pool is None:
+
+        _check_config()
+
+        try:
+
+            _pool = pool.SimpleConnectionPool(
+                POOL_MIN_CONNECTIONS,
+                POOL_MAX_CONNECTIONS,
+                host=DB_HOST,
+                port=DB_PORT,
+                database=DB_NAME,
+                user=DB_USER,
+                password=DB_PASSWORD
+            )
+
+        except psycopg2.OperationalError as e:
+
+            raise DatabaseError(
+                f"Impossible de se connecter à PostgreSQL "
+                f"({DB_HOST}:{DB_PORT}/{DB_NAME}) : {e}"
+            ) from e
+
+    return _pool
+
+
+def close_pool():
+    """
+    Ferme proprement toutes les connexions du pool.
+    À appeler à l'arrêt de l'application (shutdown FastAPI par exemple).
+    """
+
+    global _pool
+
+    if _pool is not None:
+
+        _pool.closeall()
+
+        _pool = None
+
+
+# ==========================================================
+# CONNEXION DIRECTE (hors pool)
 # ==========================================================
 
 def get_connection():
+    """
+    Retourne une connexion PostgreSQL directe, hors pool.
 
-    connection = psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD
-    )
+    Réservée aux opérations ponctuelles (init_database, scripts de
+    migration). L'appelant est responsable de fermer la connexion.
+    Pour toute requête applicative, utilisez get_cursor() ci-dessous.
+    """
 
-    return connection
+    _check_config()
+
+    try:
+
+        return psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD
+        )
+
+    except psycopg2.OperationalError as e:
+
+        raise DatabaseError(
+            f"Impossible de se connecter à PostgreSQL "
+            f"({DB_HOST}:{DB_PORT}/{DB_NAME}) : {e}"
+        ) from e
+
+
+# ==========================================================
+# CURSEUR VIA LE POOL (usage recommandé)
+# ==========================================================
+
+@contextmanager
+def get_cursor(commit=False, dict_cursor=False):
+    """
+    Fournit un curseur PostgreSQL depuis le pool de connexions.
+
+    Garanties :
+    - la connexion est TOUJOURS remise dans le pool (jamais de fuite),
+      même si la requête échoue ;
+    - le curseur est toujours fermé ;
+    - commit uniquement si commit=True et qu'aucune exception n'a été
+      levée ; rollback automatique sinon ;
+    - toute erreur psycopg2 est ré-emballée en DatabaseError, avec le
+      détail original conservé via `raise ... from e`.
+
+    Usage :
+        with get_cursor(commit=True) as cursor:
+            cursor.execute("INSERT INTO ...", (...))
+    """
+
+    conn = _get_pool().getconn()
+
+    cursor = None
+
+    try:
+
+        cursor_factory = RealDictCursor if dict_cursor else None
+
+        cursor = conn.cursor(cursor_factory=cursor_factory)
+
+        yield cursor
+
+        if commit:
+
+            conn.commit()
+
+    except Exception as e:
+
+        conn.rollback()
+
+        logger.error("Erreur base de données : %s", e)
+
+        raise DatabaseError(str(e)) from e
+
+    finally:
+
+        if cursor is not None:
+
+            cursor.close()
+
+        _get_pool().putconn(conn)
 
 
 # ==========================================================
@@ -48,38 +209,55 @@ def init_database():
 
     connection = get_connection()
 
-    cursor = connection.cursor()
+    try:
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS reviews (
+        cursor = connection.cursor()
 
-            id SERIAL PRIMARY KEY,
+        try:
 
-            product_id TEXT,
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS reviews (
 
-            user_name TEXT,
+                    id SERIAL PRIMARY KEY,
 
-            text TEXT NOT NULL,
+                    product_id TEXT,
 
-            score INTEGER,
+                    user_name TEXT,
 
-            sentiment TEXT,
+                    text TEXT NOT NULL,
 
-            sentiment_confidence DOUBLE PRECISION,
+                    score INTEGER,
 
-            predicted_score INTEGER,
+                    sentiment TEXT,
 
-            rating_confidence DOUBLE PRECISION,
+                    sentiment_confidence DOUBLE PRECISION,
 
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    predicted_score INTEGER,
 
-        )
-    """)
+                    rating_confidence DOUBLE PRECISION,
 
-    connection.commit()
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
-    cursor.close()
-    connection.close()
+                )
+            """)
+
+            connection.commit()
+
+        finally:
+
+            cursor.close()
+
+    except Exception as e:
+
+        connection.rollback()
+
+        raise DatabaseError(
+            f"Échec de l'initialisation de la base : {e}"
+        ) from e
+
+    finally:
+
+        connection.close()
 
 
 # ==========================================================
@@ -97,48 +275,41 @@ def insert_review(
     rating_confidence
 ):
 
-    connection = get_connection()
+    with get_cursor(commit=True) as cursor:
 
-    cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO reviews (
 
-    cursor.execute(
-        """
-        INSERT INTO reviews (
+                product_id,
+                user_name,
+                text,
+                score,
+                sentiment,
+                sentiment_confidence,
+                predicted_score,
+                rating_confidence
 
-            product_id,
-            user_name,
-            text,
-            score,
-            sentiment,
-            sentiment_confidence,
-            predicted_score,
-            rating_confidence
+            )
 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+
+            RETURNING id
+            """,
+
+            (
+                product_id,
+                user_name,
+                text,
+                score,
+                sentiment,
+                sentiment_confidence,
+                predicted_score,
+                rating_confidence
+            )
         )
 
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-
-        RETURNING id
-        """,
-
-        (
-            product_id,
-            user_name,
-            text,
-            score,
-            sentiment,
-            sentiment_confidence,
-            predicted_score,
-            rating_confidence
-        )
-    )
-
-    review_id = cursor.fetchone()[0]
-
-    connection.commit()
-
-    cursor.close()
-    connection.close()
+        review_id = cursor.fetchone()[0]
 
     return review_id
 
@@ -149,40 +320,33 @@ def insert_review(
 
 def get_recent_reviews(limit=20):
 
-    connection = get_connection()
+    with get_cursor(dict_cursor=True) as cursor:
 
-    cursor = connection.cursor(
-        cursor_factory=RealDictCursor
-    )
+        cursor.execute(
+            """
+            SELECT
+                id,
+                product_id,
+                user_name,
+                text,
+                score,
+                sentiment,
+                sentiment_confidence,
+                predicted_score,
+                rating_confidence,
+                created_at
 
-    cursor.execute(
-        """
-        SELECT
-            id,
-            product_id,
-            user_name,
-            text,
-            score,
-            sentiment,
-            sentiment_confidence,
-            predicted_score,
-            rating_confidence,
-            created_at
+            FROM reviews
 
-        FROM reviews
+            ORDER BY id DESC
 
-        ORDER BY id DESC
+            LIMIT %s
+            """,
 
-        LIMIT %s
-        """,
+            (limit,)
+        )
 
-        (limit,)
-    )
-
-    rows = cursor.fetchall()
-
-    cursor.close()
-    connection.close()
+        rows = cursor.fetchall()
 
     return [
         dict(row)
@@ -195,94 +359,58 @@ def get_recent_reviews(limit=20):
 # ==========================================================
 
 def get_statistics():
+    """
+    Calcule toutes les statistiques en une seule requête (au lieu de
+    4 allers-retours séparés) grâce à COUNT(*) FILTER.
+    """
 
-    connection = get_connection()
+    with get_cursor(dict_cursor=True) as cursor:
 
-    cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT
 
-    # ======================================================
-    # TOTAL
-    # ======================================================
+                COUNT(*) AS total,
 
-    cursor.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM reviews
-        """
-    )
+                COUNT(*) FILTER (
+                    WHERE sentiment = 'positif'
+                ) AS positif,
 
-    total = cursor.fetchone()[0]
+                COUNT(*) FILTER (
+                    WHERE sentiment = 'neutre'
+                ) AS neutre,
 
+                COUNT(*) FILTER (
+                    WHERE sentiment = 'negatif'
+                ) AS negatif,
 
-    # ======================================================
-    # POSITIFS
-    # ======================================================
+                AVG(score) FILTER (
+                    WHERE score IS NOT NULL
+                ) AS moyenne
 
-    cursor.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM reviews
-        WHERE sentiment = 'positif'
-        """
-    )
+            FROM reviews
+            """
+        )
 
-    positif = cursor.fetchone()[0]
-
-
-    # ======================================================
-    # NEUTRES
-    # ======================================================
-
-    cursor.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM reviews
-        WHERE sentiment = 'neutre'
-        """
-    )
-
-    neutre = cursor.fetchone()[0]
+        row = cursor.fetchone()
 
 
     # ======================================================
-    # NEGATIFS
+    # VALEURS PAR DEFAUT
     # ======================================================
 
-    cursor.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM reviews
-        WHERE sentiment = 'negatif'
-        """
-    )
+    total = row["total"]
 
-    negatif = cursor.fetchone()[0]
+    positif = row["positif"]
 
+    neutre = row["neutre"]
 
-    # ======================================================
-    # NOTE MOYENNE
-    # ======================================================
+    negatif = row["negatif"]
 
-    cursor.execute(
-        """
-        SELECT AVG(score) AS moyenne
-        FROM reviews
-        WHERE score IS NOT NULL
-        """
-    )
-
-    moyenne = cursor.fetchone()[0]
-
-
-    cursor.close()
-    connection.close()
-
-
-    # ======================================================
-    # VALEUR PAR DEFAUT
-    # ======================================================
+    moyenne = row["moyenne"]
 
     if moyenne is None:
+
         moyenne = 0
 
 

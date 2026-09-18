@@ -9,13 +9,20 @@ from pydantic import BaseModel, Field
 
 class ReviewCreate(BaseModel):
 
-    product_id: Optional[str] = "Produit inconnu"
+    product_id: Optional[str] = Field(
+        default="Produit inconnu",
+        max_length=255
+    )
 
-    user_name: Optional[str] = "Utilisateur"
+    user_name: Optional[str] = Field(
+        default="Utilisateur",
+        max_length=255
+    )
 
     text: str = Field(
         ...,
         min_length=3,
+        max_length=5000,
         description="Texte de l'avis"
     )
 
